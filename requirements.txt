@@ -1,0 +1,19 @@
+# Twake Whisper Backend - MLX Native on macOS
+# For Apple Silicon only
+
+# Web Framework
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+python-multipart==0.0.20
+
+# MLX Whisper (Apple Silicon)
+mlx==0.25.2
+mlx-whisper==0.4.0
+
+# Audio Processing
+numpy==1.26.4
+librosa==0.10.2.post1
+
+# Utilities
+pydantic==2.10.4
+python-dotenv==1.0.1

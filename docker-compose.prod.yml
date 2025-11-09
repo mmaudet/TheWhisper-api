@@ -1,6 +1,6 @@
 version: '3.8'
 
-# Production docker-compose using pre-built images from GitHub Container Registry
+# Production docker-compose using pre-built images from Docker Hub
 # Usage: docker compose -f docker-compose.prod.yml up -d
 
 services:
@@ -8,7 +8,7 @@ services:
   # Default Service: faster-whisper with OpenAI models (pre-built image)
   # ============================================================================
   whisper-api:
-    image: ghcr.io/mmaudet/thewhisper-api:cuda-latest
+    image: mmaudet/thewhisper-api:cuda
     container_name: whisper-api-cuda
     restart: unless-stopped
 
@@ -59,7 +59,7 @@ services:
   # Alternative Service: TheStageAI optimized models (pre-built image)
   # ============================================================================
   whisper-api-thestage:
-    image: ghcr.io/mmaudet/thewhisper-api:thestage-latest
+    image: mmaudet/thewhisper-api:thestage
     container_name: whisper-api-thestage
     restart: unless-stopped
     profiles: ["thestage"]  # Only starts with: docker compose -f docker-compose.prod.yml --profile thestage up

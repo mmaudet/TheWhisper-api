@@ -4,7 +4,13 @@ This document explains the automated build and deployment pipeline for TheWhispe
 
 ## Overview
 
-TheWhisper-api uses **GitHub Actions** to automatically build and publish Docker images to **GitHub Container Registry (GHCR)** whenever code is pushed to the main branch or a version tag is created.
+TheWhisper-api uses **GitHub Actions** to automatically build and publish Docker images to **Docker Hub** whenever code is pushed to the main branch or a version tag is created.
+
+### Quick Links
+
+- **Docker Hub Repository**: https://hub.docker.com/r/mmaudet/thewhisper-api
+- **GitHub Actions**: https://github.com/mmaudet/TheWhisper-api/actions
+- **Setup Guide**: [DOCKER_HUB_SETUP.md](DOCKER_HUB_SETUP.md)
 
 ## Automated Builds
 
@@ -16,22 +22,33 @@ Two Docker images are built automatically:
    - Dockerfile: `Dockerfile`
    - Uses OpenAI Whisper models via faster-whisper
    - Open source, no licensing concerns
-   - Image tags: `latest`, `cuda-latest`, version tags
+   - Image tags: `latest`, `cuda`, version tags
 
 2. **TheStageAI image** (advanced)
    - Dockerfile: `Dockerfile.thestage`
    - Uses TheStageAI optimized models
    - Includes TheStageAI SDK
-   - Image tags: `thestage-latest`, version tags with `-thestage` suffix
+   - Image tags: `thestage`, version tags with `-thestage` suffix
 
 ### Trigger Events
 
 Builds are triggered on:
 
-- **Push to `main` branch**: Creates `latest` and `cuda-latest` / `thestage-latest` tags
+- **Push to `main` branch**: Creates `latest`, `cuda`, `thestage` tags
 - **Version tags** (e.g., `v1.0.0`): Creates versioned tags (e.g., `1.0.0`, `1.0`, `1`)
 - **Pull requests**: Builds images for testing (not pushed)
 - **Manual trigger**: Via GitHub Actions "Run workflow" button
+
+### Prerequisites
+
+Before the CI/CD can work, you need to configure Docker Hub credentials:
+
+**👉 See [DOCKER_HUB_SETUP.md](DOCKER_HUB_SETUP.md) for complete setup instructions**
+
+Quick summary:
+1. Create Docker Hub access token
+2. Add `DOCKERHUB_TOKEN` secret to GitHub repository
+3. Push to main to trigger first build
 
 ### Image Tags
 
@@ -41,21 +58,21 @@ The CI/CD creates multiple tags for flexibility:
 
 | Tag | Description | Example |
 |-----|-------------|---------|
-| `latest` | Latest stable build from main | `ghcr.io/mmaudet/thewhisper-api:latest` |
-| `cuda-latest` | Explicit CUDA version tag | `ghcr.io/mmaudet/thewhisper-api:cuda-latest` |
-| `{version}` | Semantic version | `ghcr.io/mmaudet/thewhisper-api:1.0.0` |
-| `{major}.{minor}` | Major.minor version | `ghcr.io/mmaudet/thewhisper-api:1.0` |
-| `{major}` | Major version | `ghcr.io/mmaudet/thewhisper-api:1` |
-| `main-{sha}` | Commit-specific | `ghcr.io/mmaudet/thewhisper-api:main-abc1234` |
+| `latest` | Latest stable build from main | `mmaudet/thewhisper-api:latest` |
+| `cuda` | Explicit CUDA version tag | `mmaudet/thewhisper-api:cuda` |
+| `{version}` | Semantic version | `mmaudet/thewhisper-api:1.0.0` |
+| `{major}.{minor}` | Major.minor version | `mmaudet/thewhisper-api:1.0` |
+| `{major}` | Major version | `mmaudet/thewhisper-api:1` |
+| `main-{sha}` | Commit-specific | `mmaudet/thewhisper-api:main-abc1234` |
 
 #### TheStageAI Image
 
 | Tag | Description | Example |
 |-----|-------------|---------|
-| `thestage-latest` | Latest TheStageAI build | `ghcr.io/mmaudet/thewhisper-api:thestage-latest` |
-| `{version}-thestage` | Versioned TheStageAI | `ghcr.io/mmaudet/thewhisper-api:1.0.0-thestage` |
-| `{major}.{minor}-thestage` | Major.minor | `ghcr.io/mmaudet/thewhisper-api:1.0-thestage` |
-| `main-{sha}-thestage` | Commit-specific | `ghcr.io/mmaudet/thewhisper-api:main-abc1234-thestage` |
+| `thestage` | Latest TheStageAI build | `mmaudet/thewhisper-api:thestage` |
+| `{version}-thestage` | Versioned TheStageAI | `mmaudet/thewhisper-api:1.0.0-thestage` |
+| `{major}.{minor}-thestage` | Major.minor | `mmaudet/thewhisper-api:1.0-thestage` |
+| `main-{sha}-thestage` | Commit-specific | `mmaudet/thewhisper-api:main-abc1234-thestage` |
 
 ## Using Pre-Built Images
 
@@ -84,7 +101,7 @@ docker compose -f docker-compose.prod.yml --profile thestage up -d
 
 ```bash
 # Pull the image
-docker pull ghcr.io/mmaudet/thewhisper-api:cuda-latest
+docker pull mmaudet/thewhisper-api:cuda
 
 # Run the container
 docker run -d \
@@ -96,7 +113,7 @@ docker run -d \
   -e DEVICE=cuda \
   -e COMPUTE_TYPE=float16 \
   --restart unless-stopped \
-  ghcr.io/mmaudet/thewhisper-api:cuda-latest
+  mmaudet/thewhisper-api:cuda
 ```
 
 ### Option 3: Local Build (Development)
@@ -128,7 +145,7 @@ For production stability, pin to specific versions:
 # docker-compose.prod.yml
 services:
   whisper-api:
-    image: ghcr.io/mmaudet/thewhisper-api:1.0.0  # Pinned version
+    image: mmaudet/thewhisper-api:1.0.0  # Pinned version
 ```
 
 ## CI/CD Workflow Details
@@ -158,9 +175,9 @@ Typical build times:
 
 The workflow requires:
 - `contents: read` - Read repository code
-- `packages: write` - Push to GitHub Container Registry
+- Docker Hub credentials - Configured via `DOCKERHUB_TOKEN` secret
 
-These are automatically granted via `GITHUB_TOKEN`.
+See [DOCKER_HUB_SETUP.md](DOCKER_HUB_SETUP.md) for setup instructions.
 
 ## Viewing Build Status
 
@@ -197,9 +214,11 @@ Common issues:
 If you can't pull images:
 
 ```bash
-# Public images don't require authentication, but if needed:
-docker login ghcr.io -u YOUR_GITHUB_USERNAME
-# Token: Personal access token with read:packages scope
+# Public images from Docker Hub don't require authentication
+# But if you encounter rate limits:
+docker login
+# Username: mmaudet
+# Password: Docker Hub password or access token
 ```
 
 ### Cache Issues
@@ -257,16 +276,19 @@ git push origin v1.0.0
 
 ### Viewing Published Images
 
-Visit: https://github.com/mmaudet?tab=packages
+Visit: https://hub.docker.com/r/mmaudet/thewhisper-api
 
 Or using Docker CLI:
 
 ```bash
-# List tags
-docker search ghcr.io/mmaudet/thewhisper-api
+# Search for image
+docker search mmaudet/thewhisper-api
 
 # Pull specific tag
-docker pull ghcr.io/mmaudet/thewhisper-api:1.0.0
+docker pull mmaudet/thewhisper-api:1.0.0
+
+# List all tags (via Docker Hub website)
+https://hub.docker.com/r/mmaudet/thewhisper-api/tags
 ```
 
 ### Image Cleanup

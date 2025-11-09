@@ -128,7 +128,7 @@ Service will be available at `http://localhost:8000`
 
 ### Pre-Built Images (Production)
 
-**Recommended for production**: Use pre-built images from GitHub Container Registry (no build time needed):
+**Recommended for production**: Use pre-built images from Docker Hub (no build time needed):
 
 ```bash
 # Copy configuration
@@ -141,12 +141,16 @@ docker compose -f docker-compose.prod.yml up -d
 docker compose -f docker-compose.prod.yml logs -f
 ```
 
-**Available images:**
-- `ghcr.io/mmaudet/thewhisper-api:cuda-latest` - faster-whisper (default)
-- `ghcr.io/mmaudet/thewhisper-api:thestage-latest` - TheStageAI version
+**Available on Docker Hub:**
+- 🐳 **Repository**: https://hub.docker.com/r/mmaudet/thewhisper-api
+- `mmaudet/thewhisper-api:cuda` - faster-whisper (default)
+- `mmaudet/thewhisper-api:thestage` - TheStageAI version
+- `mmaudet/thewhisper-api:latest` - Latest build
 - Version tags: `1.0.0`, `1.0`, `1` for pinned deployments
 
 **Benefits:** ✅ No build time, ✅ CI/CD tested, ✅ Automatic updates
+
+**Setup CI/CD:** See [DOCKER_HUB_SETUP.md](DOCKER_HUB_SETUP.md) to configure automated builds
 
 See [CICD.md](CICD.md) for complete CI/CD documentation.
 

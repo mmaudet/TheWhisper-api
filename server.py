@@ -12,10 +12,11 @@ from contextlib import asynccontextmanager
 from typing import Dict, List, Optional
 
 import numpy as np
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from dotenv import load_dotenv
+import io
 
 # Load environment variables
 load_dotenv()
@@ -254,9 +255,35 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI app
 app = FastAPI(
-    title="Twake Whisper Backend",
-    description="Real-time speech-to-text with MLX-Whisper on Apple Silicon",
+    title="TheWhisper-api",
+    description="""
+## Real-time Speech-to-Text API with MLX-Whisper on Apple Silicon
+
+TheWhisper-api provides high-performance, real-time speech-to-text transcription using MLX-Whisper optimized for Apple Silicon.
+
+### Features
+- 🚀 **MLX Acceleration**: Optimized for Apple Silicon (M1/M2/M3) GPUs
+- 🎯 **Session-based Streaming**: Manage multiple concurrent transcription sessions
+- ⏱️ **Word Timestamps**: Precise word-level timing information
+- 🔄 **Real-time Processing**: Low-latency transcription with configurable chunk sizes
+- 🌐 **OpenAI Compatible**: Supports OpenAI Audio API format
+
+### API Formats
+- **Session-based API**: `/session/*` endpoints for streaming transcription
+- **OpenAI Compatible**: `/v1/audio/transcriptions` for drop-in replacement
+
+### Documentation
+- **Swagger UI**: [/docs](/docs)
+- **ReDoc**: [/redoc](/redoc)
+    """,
     version="1.0.0",
+    contact={
+        "name": "TheWhisper-api",
+        "url": "https://github.com/mmaudet/TheWhisper-api",
+    },
+    license_info={
+        "name": "MIT",
+    },
     lifespan=lifespan
 )
 
@@ -278,20 +305,32 @@ app.add_middleware(
 # API Endpoints
 # ============================================================================
 
-@app.get("/")
+@app.get("/", tags=["General"])
 async def root():
-    """Root endpoint"""
+    """
+    Get API information
+
+    Returns basic information about the API, including platform and MLX availability status.
+    """
     return {
-        "message": "Twake Whisper Backend - MLX Native",
+        "message": "TheWhisper-api - MLX Native Speech-to-Text",
         "status": "running",
         "platform": "Apple Silicon",
-        "mlx_available": MLX_AVAILABLE
+        "mlx_available": MLX_AVAILABLE,
+        "version": "1.0.0"
     }
 
 
-@app.get("/health")
+@app.get("/health", tags=["General"])
 async def health():
-    """Health check endpoint"""
+    """
+    Health check endpoint
+
+    Check if the service is healthy and get current status including:
+    - Overall health status
+    - MLX availability
+    - Number of active transcription sessions
+    """
     return {
         "status": "healthy",
         "mlx_available": MLX_AVAILABLE,
@@ -299,9 +338,27 @@ async def health():
     }
 
 
-@app.post("/session/create/", response_model=SessionResponse)
+@app.post("/session/create/", response_model=SessionResponse, tags=["Session-based API"])
 async def create_session(request: SessionCreateRequest):
-    """Create a new transcription session"""
+    """
+    Create a new transcription session
+
+    Initializes a new real-time transcription session with the specified language.
+    Returns a unique session ID for subsequent operations.
+
+    **Parameters:**
+    - **language**: Language code (e.g., 'en', 'fr', 'es'). Default: 'en'
+
+    **Returns:**
+    - **session_id**: URL-safe unique identifier for this session
+
+    **Example:**
+    ```json
+    {
+      "language": "en"
+    }
+    ```
+    """
     if not manager:
         raise HTTPException(status_code=503, detail="Service not available")
 
@@ -312,9 +369,24 @@ async def create_session(request: SessionCreateRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/session/{session_id}/add_chunk")
+@app.post("/session/{session_id}/add_chunk", tags=["Session-based API"])
 async def add_chunk(session_id: str, request: AudioChunkRequest):
-    """Add audio chunk to session"""
+    """
+    Add audio chunk to session
+
+    Stream audio data to an active transcription session. Audio should be:
+    - Format: Float32 PCM
+    - Sample rate: 16kHz
+    - Channels: Mono
+    - Encoding: Base64
+
+    **Parameters:**
+    - **session_id**: The session ID from create_session
+    - **audio_base64**: Base64-encoded Float32 PCM audio data
+
+    **Returns:**
+    - **status**: Operation result ('success' or error)
+    """
     if not manager:
         raise HTTPException(status_code=503, detail="Service not available")
 
@@ -327,9 +399,23 @@ async def add_chunk(session_id: str, request: AudioChunkRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/session/{session_id}/process", response_model=TranscriptionResponse)
+@app.post("/session/{session_id}/process", response_model=TranscriptionResponse, tags=["Session-based API"])
 async def process_session(session_id: str):
-    """Get current transcription results"""
+    """
+    Process and get transcription results
+
+    Trigger transcription processing and retrieve results. Transcription begins when
+    the audio buffer reaches the configured chunk duration (default: 15 seconds).
+
+    **Parameters:**
+    - **session_id**: The session ID from create_session
+
+    **Returns:**
+    - **committed**: List of finalized transcribed words with timestamps
+    - **uncommitted**: List of in-progress words (currently unused)
+
+    **Note:** This endpoint processes accumulated audio and returns all committed transcriptions.
+    """
     if not manager:
         raise HTTPException(status_code=503, detail="Service not available")
 
@@ -342,9 +428,20 @@ async def process_session(session_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/session/{session_id}/end")
+@app.post("/session/{session_id}/end", tags=["Session-based API"])
 async def end_session(session_id: str):
-    """End transcription session"""
+    """
+    End transcription session
+
+    Finalizes and cleans up a transcription session. Any remaining audio in the buffer
+    will be processed before the session is closed.
+
+    **Parameters:**
+    - **session_id**: The session ID to end
+
+    **Returns:**
+    - **status**: 'ended' on success
+    """
     if not manager:
         raise HTTPException(status_code=503, detail="Service not available")
 
@@ -355,9 +452,20 @@ async def end_session(session_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/session/{session_id}/clear")
+@app.post("/session/{session_id}/clear", tags=["Session-based API"])
 async def clear_session(session_id: str):
-    """Clear session buffers"""
+    """
+    Clear session buffers
+
+    Resets the audio buffer and transcription history for an active session without ending it.
+    Useful for starting a new transcription segment within the same session.
+
+    **Parameters:**
+    - **session_id**: The session ID to clear
+
+    **Returns:**
+    - **status**: 'cleared' on success
+    """
     if not manager:
         raise HTTPException(status_code=503, detail="Service not available")
 
@@ -367,6 +475,117 @@ async def clear_session(session_id: str):
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# OpenAI Compatible API
+# ============================================================================
+
+@app.post("/v1/audio/transcriptions", tags=["OpenAI Compatible"])
+async def create_transcription(
+    file: UploadFile = File(..., description="The audio file to transcribe"),
+    model: str = Form(default="whisper-1", description="Model to use for transcription"),
+    language: Optional[str] = Form(default=None, description="Language of the audio (ISO-639-1)"),
+    response_format: str = Form(default="json", description="Format of the response: json, text, srt, verbose_json, vtt"),
+    temperature: float = Form(default=0.0, description="Sampling temperature (0-1)")
+):
+    """
+    Create transcription (OpenAI compatible)
+
+    Transcribes audio into the input language. This endpoint is compatible with OpenAI's
+    Audio API, allowing drop-in replacement for applications using OpenAI's Whisper API.
+
+    **Compatible with**: OpenAI Audio API v1
+
+    **Supported formats**: mp3, mp4, mpeg, mpga, m4a, wav, webm
+
+    **Parameters:**
+    - **file**: Audio file to transcribe (required)
+    - **model**: Model ID (default: "whisper-1", ignored - uses MLX-Whisper)
+    - **language**: Language code (e.g., 'en', 'fr', 'es')
+    - **response_format**: Output format (json, text, verbose_json)
+    - **temperature**: Sampling temperature 0-1 (currently ignored)
+
+    **Returns:**
+    - **json**: `{"text": "transcribed text"}`
+    - **text**: Plain text transcription
+    - **verbose_json**: Detailed JSON with segments and timestamps
+
+    **Example:**
+    ```bash
+    curl -X POST http://localhost:8000/v1/audio/transcriptions \\
+      -F file=@audio.mp3 \\
+      -F model=whisper-1 \\
+      -F language=en
+    ```
+    """
+    if not manager or not MLX_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Service not available")
+
+    try:
+        # Read audio file
+        audio_bytes = await file.read()
+
+        # Convert audio to numpy array
+        # For simplicity, assume WAV/PCM format or use librosa for conversion
+        try:
+            import librosa
+            # Load audio with librosa (handles various formats)
+            audio_array, sr = librosa.load(io.BytesIO(audio_bytes), sr=16000, mono=True)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid audio format: {str(e)}")
+
+        # Transcribe with MLX-Whisper
+        from mlx_whisper import transcribe as mlx_transcribe
+
+        result = mlx_transcribe(
+            audio_array,
+            path_or_hf_repo=manager.model_name,
+            language=language,
+            word_timestamps=(response_format == "verbose_json"),
+            verbose=False
+        )
+
+        # Format response according to response_format
+        if response_format == "text":
+            return result.get("text", "")
+        elif response_format == "verbose_json":
+            # Return detailed format similar to OpenAI
+            segments = []
+            if "segments" in result:
+                for seg in result["segments"]:
+                    segment_data = {
+                        "id": seg.get("id", 0),
+                        "seek": seg.get("seek", 0),
+                        "start": seg.get("start", 0.0),
+                        "end": seg.get("end", 0.0),
+                        "text": seg.get("text", ""),
+                        "tokens": seg.get("tokens", []),
+                        "temperature": temperature,
+                        "avg_logprob": seg.get("avg_logprob", 0.0),
+                        "compression_ratio": seg.get("compression_ratio", 0.0),
+                        "no_speech_prob": seg.get("no_speech_prob", 0.0)
+                    }
+                    if "words" in seg:
+                        segment_data["words"] = seg["words"]
+                    segments.append(segment_data)
+
+            return {
+                "task": "transcribe",
+                "language": result.get("language", language or "en"),
+                "duration": len(audio_array) / 16000.0,
+                "text": result.get("text", ""),
+                "segments": segments
+            }
+        else:  # json (default)
+            return {"text": result.get("text", "")}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 

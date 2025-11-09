@@ -70,11 +70,13 @@ class StreamingManager:
         self.model_name = model_name
         self.sample_rate = 16000  # Whisper requires 16kHz
         self.sessions: Dict[str, dict] = {}
-        self.chunk_duration = 15  # seconds
+        self.chunk_duration = 5  # seconds - reduced for better UX
+        self.uncommitted_threshold = 1.0  # seconds - minimum audio for uncommitted
 
         print(f"📦 Model: {model_name}")
         print(f"🎤 Sample rate: {self.sample_rate}Hz")
-        print(f"⏱️  Chunk duration: {self.chunk_duration}s")
+        print(f"⏱️  Commit duration: {self.chunk_duration}s")
+        print(f"⏱️  Uncommitted threshold: {self.uncommitted_threshold}s")
 
     def create_session(self, language: str = "en") -> str:
         """Create a new transcription session"""
@@ -122,7 +124,13 @@ class StreamingManager:
         committed = []
         uncommitted = []
 
-        # If we have enough audio, transcribe
+        # Always return previously committed words
+        if "committed_words" not in session:
+            session["committed_words"] = []
+
+        committed = session["committed_words"].copy()
+
+        # If we have enough audio for final transcription (>= chunk_duration)
         if buffer_length_s >= self.chunk_duration:
             try:
                 # Transcribe with MLX-Whisper
@@ -131,15 +139,19 @@ class StreamingManager:
                     path_or_hf_repo=self.model_name,
                     language=language,
                     word_timestamps=True,
-                    verbose=False
+                    verbose=False,
+                    no_speech_threshold=0.8,  # Higher = more strict against silence hallucinations
+                    logprob_threshold=-0.8,   # Higher (less negative) = less hallucinations
+                    compression_ratio_threshold=2.0  # Lower = stricter against repetitions
                 )
 
-                # Extract words from segments
+                # Extract new committed words from segments
+                new_committed = []
                 if "segments" in result:
                     for segment in result["segments"]:
                         if "words" in segment and segment["words"]:
                             for word_info in segment["words"]:
-                                committed.append(Word(
+                                new_committed.append(Word(
                                     text=word_info["word"].strip(),
                                     timestamp=[word_info["start"], word_info["end"]]
                                 ))
@@ -147,10 +159,14 @@ class StreamingManager:
                             # No word timestamps, use segment text
                             text = segment["text"].strip()
                             if text:
-                                committed.append(Word(
+                                new_committed.append(Word(
                                     text=text,
                                     timestamp=[segment["start"], segment["end"]]
                                 ))
+
+                # Add to committed words
+                session["committed_words"].extend(new_committed)
+                committed = session["committed_words"].copy()
 
                 # Store transcribed text
                 if result.get("text"):
@@ -159,16 +175,48 @@ class StreamingManager:
                 # Clear buffer after transcription
                 session["audio_buffer"] = np.array([], dtype=np.float32)
 
-                print(f"✅ Transcribed {buffer_length_s:.1f}s: {result.get('text', '')[:50]}...")
+                print(f"✅ Committed {buffer_length_s:.1f}s: {result.get('text', '')[:50]}...")
 
             except Exception as e:
                 print(f"⚠️ Transcription error: {e}")
                 import traceback
                 traceback.print_exc()
-        else:
-            # Not enough audio yet - return previous results
-            for text in session["transcribed_text"]:
-                committed.append(Word(text=text, timestamp=None))
+        elif buffer_length_s >= self.uncommitted_threshold:
+            # Have some audio but not enough for final - transcribe as uncommitted
+            try:
+                result = transcribe(
+                    audio_buffer,
+                    path_or_hf_repo=self.model_name,
+                    language=language,
+                    word_timestamps=True,
+                    verbose=False,
+                    no_speech_threshold=0.8,  # Higher = more strict against silence hallucinations
+                    logprob_threshold=-0.8,   # Higher (less negative) = less hallucinations
+                    compression_ratio_threshold=2.0  # Lower = stricter against repetitions
+                )
+
+                # Extract uncommitted words
+                if "segments" in result:
+                    for segment in result["segments"]:
+                        if "words" in segment and segment["words"]:
+                            for word_info in segment["words"]:
+                                uncommitted.append(Word(
+                                    text=word_info["word"].strip(),
+                                    timestamp=[word_info["start"], word_info["end"]]
+                                ))
+                        else:
+                            text = segment["text"].strip()
+                            if text:
+                                uncommitted.append(Word(
+                                    text=text,
+                                    timestamp=[segment["start"], segment["end"]]
+                                ))
+
+                if uncommitted:
+                    print(f"🔄 Uncommitted {buffer_length_s:.1f}s: {result.get('text', '')[:50]}...")
+
+            except Exception as e:
+                print(f"⚠️ Uncommitted transcription error: {e}")
 
         return TranscriptionResponse(committed=committed, uncommitted=uncommitted)
 

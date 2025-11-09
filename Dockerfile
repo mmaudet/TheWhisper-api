@@ -2,7 +2,7 @@
 # Multi-stage build for optimized image size
 
 # Stage 1: Base image with CUDA support
-FROM nvidia/cuda:12.2.0-cudnn8-runtime-ubuntu22.04 AS base
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS base
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive \

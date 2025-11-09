@@ -1,7 +1,7 @@
 # TheWhisper-api with TheStageAI SDK
 # For use with TheStageAI optimized models
 
-FROM nvidia/cuda:12.2.0-cudnn8-runtime-ubuntu22.04 AS base
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS base
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \

@@ -1,6 +1,7 @@
 """
-Twake Whisper Backend - CUDA Version
-FastAPI server for real-time speech-to-text using faster-whisper on NVIDIA GPUs
+Twake Whisper Backend - CUDA Version (Hybrid)
+FastAPI server for real-time speech-to-text
+Supports both TheStageAI optimized models and OpenAI Whisper models via faster-whisper
 """
 
 import base64
@@ -9,7 +10,8 @@ import signal
 import sys
 import uuid
 from contextlib import asynccontextmanager
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
+from abc import ABC, abstractmethod
 
 import numpy as np
 from fastapi import FastAPI, HTTPException, File, UploadFile, Form
@@ -21,15 +23,28 @@ import io
 # Load environment variables
 load_dotenv()
 
-# Faster-Whisper imports
+# Try to import TheStageAI SDK first
+THESTAGE_AVAILABLE = False
+try:
+    from thestage_speechkit.nvidia import ASRPipeline as TheStageASR
+    THESTAGE_AVAILABLE = True
+    print("✅ TheStageAI SDK loaded successfully")
+except ImportError:
+    print("ℹ️  TheStageAI SDK not available, will use faster-whisper")
+
+# Try to import faster-whisper as fallback
+FASTER_WHISPER_AVAILABLE = False
 try:
     from faster_whisper import WhisperModel
-    CUDA_AVAILABLE = True
+    FASTER_WHISPER_AVAILABLE = True
     print("✅ faster-whisper loaded successfully")
-except ImportError as e:
-    print(f"⚠️  faster-whisper not available: {e}")
-    print("Please install: pip install faster-whisper")
-    CUDA_AVAILABLE = False
+except ImportError:
+    print("⚠️  faster-whisper not available")
+
+if not THESTAGE_AVAILABLE and not FASTER_WHISPER_AVAILABLE:
+    print("❌ No backend available! Please install either:")
+    print("   - TheStageAI SDK: pip install thestage_speechkit[nvidia]")
+    print("   - faster-whisper: pip install faster-whisper")
 
 
 # ============================================================================
@@ -59,45 +74,187 @@ class AudioChunkRequest(BaseModel):
 
 
 # ============================================================================
+# Backend Interface
+# ============================================================================
+
+class WhisperBackend(ABC):
+    """Abstract interface for Whisper backends"""
+
+    @abstractmethod
+    def transcribe(self, audio: np.ndarray, language: str, word_timestamps: bool = True) -> Tuple[List[Word], dict]:
+        """Transcribe audio and return words with timestamps"""
+        pass
+
+
+class TheStageBackend(WhisperBackend):
+    """TheStageAI optimized backend"""
+
+    def __init__(self, model_name: str, device: str = "cuda", chunk_length_s: int = 10):
+        self.model_name = model_name
+        self.device = device
+        self.chunk_length_s = chunk_length_s
+
+        print(f"🔄 Loading TheStageAI model: {model_name}")
+        self.model = TheStageASR(
+            model=model_name,
+            chunk_length_s=chunk_length_s,
+            batch_size=32,
+            device=device
+        )
+        print("✅ TheStageAI model loaded")
+
+    def transcribe(self, audio: np.ndarray, language: str, word_timestamps: bool = True) -> Tuple[List[Word], dict]:
+        """Transcribe using TheStageAI"""
+        result = self.model(
+            audio,
+            generate_kwargs={
+                'do_sample': False,
+                'use_cache': True,
+                'language': language,
+                'return_timestamps': 'word' if word_timestamps else True
+            }
+        )
+
+        words = []
+        info = {
+            'language': language,
+            'text': result.get('text', '')
+        }
+
+        # Extract words from chunks
+        if 'chunks' in result:
+            for chunk in result['chunks']:
+                if 'timestamp' in chunk:
+                    words.append(Word(
+                        text=chunk['text'].strip(),
+                        timestamp=list(chunk['timestamp']) if isinstance(chunk['timestamp'], tuple) else chunk['timestamp']
+                    ))
+                else:
+                    words.append(Word(text=chunk['text'].strip(), timestamp=None))
+        elif result.get('text'):
+            # No word-level timestamps, return full text
+            words.append(Word(text=result['text'].strip(), timestamp=None))
+
+        return words, info
+
+
+class FasterWhisperBackend(WhisperBackend):
+    """faster-whisper backend with OpenAI models"""
+
+    def __init__(self, model_name: str, device: str = "cuda", compute_type: str = "float16"):
+        self.model_name = model_name
+        self.device = device
+        self.compute_type = compute_type
+
+        print(f"🔄 Loading faster-whisper model: {model_name}")
+        self.model = WhisperModel(
+            model_name,
+            device=device,
+            compute_type=compute_type,
+            download_root=os.getenv("MODEL_CACHE_DIR", "/models")
+        )
+        print("✅ faster-whisper model loaded")
+
+    def transcribe(self, audio: np.ndarray, language: str, word_timestamps: bool = True) -> Tuple[List[Word], dict]:
+        """Transcribe using faster-whisper"""
+        segments, info = self.model.transcribe(
+            audio,
+            language=language,
+            word_timestamps=word_timestamps,
+            vad_filter=True,
+            vad_parameters=dict(
+                threshold=0.5,
+                min_speech_duration_ms=250,
+                min_silence_duration_ms=100
+            ),
+            beam_size=5,
+            condition_on_previous_text=False
+        )
+
+        words = []
+        for segment in segments:
+            if hasattr(segment, 'words') and segment.words:
+                for word_info in segment.words:
+                    words.append(Word(
+                        text=word_info.word.strip(),
+                        timestamp=[word_info.start, word_info.end]
+                    ))
+            else:
+                text = segment.text.strip()
+                if text:
+                    words.append(Word(
+                        text=text,
+                        timestamp=[segment.start, segment.end]
+                    ))
+
+        return words, {'language': info.language if hasattr(info, 'language') else language}
+
+
+# ============================================================================
 # Streaming Manager
 # ============================================================================
 
 class StreamingManager:
-    """Manages concurrent transcription sessions using faster-whisper"""
+    """Manages concurrent transcription sessions with hybrid backend support"""
 
-    def __init__(self, model_name: str = "large-v3-turbo", device: str = "cuda", compute_type: str = "float16"):
-        self.model_name = model_name
-        self.device = device
-        self.compute_type = compute_type
+    def __init__(self, backend_type: str = "auto", model_name: str = None, device: str = "cuda",
+                 compute_type: str = "float16", chunk_length_s: int = 10):
         self.sample_rate = 16000  # Whisper requires 16kHz
         self.sessions: Dict[str, dict] = {}
         self.chunk_duration = 5  # seconds - reduced for better UX
         self.uncommitted_threshold = 1.0  # seconds - minimum audio for uncommitted
 
-        print(f"📦 Model: {model_name}")
         print(f"🎮 Device: {device}")
-        print(f"🔢 Compute type: {compute_type}")
         print(f"🎤 Sample rate: {self.sample_rate}Hz")
         print(f"⏱️  Commit duration: {self.chunk_duration}s")
         print(f"⏱️  Uncommitted threshold: {self.uncommitted_threshold}s")
 
-        # Initialize model
-        if CUDA_AVAILABLE:
-            print("🔄 Loading Whisper model...")
-            self.model = WhisperModel(
-                model_name,
-                device=device,
-                compute_type=compute_type,
-                download_root=os.getenv("MODEL_CACHE_DIR", "/models")
-            )
-            print("✅ Model loaded successfully")
-        else:
-            self.model = None
+        # Initialize backend
+        self.backend = self._init_backend(backend_type, model_name, device, compute_type, chunk_length_s)
+
+        if not self.backend:
+            raise RuntimeError("No Whisper backend available")
+
+    def _init_backend(self, backend_type: str, model_name: Optional[str], device: str,
+                      compute_type: str, chunk_length_s: int) -> Optional[WhisperBackend]:
+        """Initialize the appropriate backend based on availability and preference"""
+
+        # Auto-select backend
+        if backend_type == "auto":
+            if THESTAGE_AVAILABLE:
+                backend_type = "thestage"
+            elif FASTER_WHISPER_AVAILABLE:
+                backend_type = "faster-whisper"
+            else:
+                return None
+
+        print(f"📦 Backend: {backend_type}")
+
+        if backend_type == "thestage":
+            if not THESTAGE_AVAILABLE:
+                print("❌ TheStageAI SDK not available, falling back to faster-whisper")
+                backend_type = "faster-whisper"
+            else:
+                model = model_name or "TheStageAI/thewhisper-large-v3-turbo"
+                print(f"📦 Model: {model}")
+                return TheStageBackend(model, device, chunk_length_s)
+
+        if backend_type == "faster-whisper":
+            if not FASTER_WHISPER_AVAILABLE:
+                print("❌ faster-whisper not available")
+                return None
+            else:
+                model = model_name or "large-v3-turbo"
+                print(f"📦 Model: {model}")
+                print(f"🔢 Compute type: {compute_type}")
+                return FasterWhisperBackend(model, device, compute_type)
+
+        return None
 
     def create_session(self, language: str = "en") -> str:
         """Create a new transcription session"""
-        if not CUDA_AVAILABLE:
-            raise RuntimeError("faster-whisper not available")
+        if not self.backend:
+            raise RuntimeError("No backend available")
 
         session_id = base64.urlsafe_b64encode(uuid.uuid4().bytes).decode('utf-8').rstrip('=')
 
@@ -105,8 +262,7 @@ class StreamingManager:
             "language": language,
             "active": True,
             "audio_buffer": np.array([], dtype=np.float32),
-            "transcribed_text": [],  # All committed transcriptions
-            "last_result": None,
+            "transcribed_text": [],
             "committed_words": []
         }
 
@@ -118,11 +274,9 @@ class StreamingManager:
         if session_id not in self.sessions:
             raise ValueError(f"Session {session_id} not found")
 
-        # Decode base64 audio (Float32 PCM)
         audio_bytes = base64.b64decode(audio_base64)
         audio_array = np.frombuffer(audio_bytes, dtype=np.float32)
 
-        # Append to buffer
         session = self.sessions[session_id]
         session["audio_buffer"] = np.concatenate([session["audio_buffer"], audio_array])
 
@@ -135,101 +289,35 @@ class StreamingManager:
         audio_buffer = session["audio_buffer"]
         language = session["language"]
 
-        # Calculate buffer length in seconds
         buffer_length_s = len(audio_buffer) / self.sample_rate
 
-        committed = []
+        committed = session["committed_words"].copy()
         uncommitted = []
 
-        # Always return previously committed words
-        committed = session["committed_words"].copy()
-
-        # If we have enough audio for final transcription (>= chunk_duration)
+        # Process committed transcription
         if buffer_length_s >= self.chunk_duration:
             try:
-                # Transcribe with faster-whisper
-                segments, info = self.model.transcribe(
-                    audio_buffer,
-                    language=language,
-                    word_timestamps=True,
-                    vad_filter=True,  # Voice activity detection
-                    vad_parameters=dict(
-                        threshold=0.5,
-                        min_speech_duration_ms=250,
-                        min_silence_duration_ms=100
-                    ),
-                    beam_size=5,
-                    condition_on_previous_text=False
-                )
+                new_words, info = self.backend.transcribe(audio_buffer, language, word_timestamps=True)
 
-                # Extract new committed words from segments
-                new_committed = []
-                for segment in segments:
-                    if hasattr(segment, 'words') and segment.words:
-                        for word_info in segment.words:
-                            new_committed.append(Word(
-                                text=word_info.word.strip(),
-                                timestamp=[word_info.start, word_info.end]
-                            ))
-                    else:
-                        # No word timestamps, use segment text
-                        text = segment.text.strip()
-                        if text:
-                            new_committed.append(Word(
-                                text=text,
-                                timestamp=[segment.start, segment.end]
-                            ))
-
-                # Add to committed words
-                session["committed_words"].extend(new_committed)
+                session["committed_words"].extend(new_words)
                 committed = session["committed_words"].copy()
 
-                # Store transcribed text
-                full_text = " ".join([w.text for w in new_committed])
+                full_text = " ".join([w.text for w in new_words])
                 if full_text:
                     session["transcribed_text"].append(full_text)
 
-                # Clear buffer after transcription
                 session["audio_buffer"] = np.array([], dtype=np.float32)
-
                 print(f"✅ Committed {buffer_length_s:.1f}s: {full_text[:50]}...")
 
             except Exception as e:
                 print(f"⚠️ Transcription error: {e}")
                 import traceback
                 traceback.print_exc()
-        elif buffer_length_s >= self.uncommitted_threshold:
-            # Have some audio but not enough for final - transcribe as uncommitted
-            try:
-                segments, info = self.model.transcribe(
-                    audio_buffer,
-                    language=language,
-                    word_timestamps=True,
-                    vad_filter=True,
-                    vad_parameters=dict(
-                        threshold=0.5,
-                        min_speech_duration_ms=250,
-                        min_silence_duration_ms=100
-                    ),
-                    beam_size=5,
-                    condition_on_previous_text=False
-                )
 
-                # Extract uncommitted words
-                for segment in segments:
-                    if hasattr(segment, 'words') and segment.words:
-                        for word_info in segment.words:
-                            uncommitted.append(Word(
-                                text=word_info.word.strip(),
-                                timestamp=[word_info.start, word_info.end]
-                            ))
-                    else:
-                        text = segment.text.strip()
-                        if text:
-                            uncommitted.append(Word(
-                                text=text,
-                                timestamp=[segment.start, segment.end]
-                            ))
+        # Process uncommitted transcription
+        elif buffer_length_s >= self.uncommitted_threshold:
+            try:
+                uncommitted, info = self.backend.transcribe(audio_buffer, language, word_timestamps=True)
 
                 if uncommitted:
                     full_text = " ".join([w.text for w in uncommitted])
@@ -245,23 +333,21 @@ class StreamingManager:
         if session_id in self.sessions:
             session = self.sessions[session_id]
 
-            # Final transcription of any remaining audio
             if len(session["audio_buffer"]) > 0:
                 try:
-                    segments, info = self.model.transcribe(
+                    words, info = self.backend.transcribe(
                         session["audio_buffer"],
-                        language=session["language"],
-                        vad_filter=True
+                        session["language"],
+                        word_timestamps=False
                     )
 
-                    final_text = " ".join([segment.text.strip() for segment in segments])
+                    final_text = " ".join([w.text for w in words])
                     if final_text:
                         session["transcribed_text"].append(final_text)
                         print(f"✅ Final transcription: {final_text[:50]}...")
                 except Exception as e:
                     print(f"⚠️ Final transcription error: {e}")
 
-            # Get final text
             final_text = " ".join(session["transcribed_text"])
             print(f"📝 Session {session_id} total: {len(final_text)} chars")
 
@@ -284,7 +370,6 @@ class StreamingManager:
 # FastAPI Application
 # ============================================================================
 
-# Global manager instance
 manager: Optional[StreamingManager] = None
 
 
@@ -293,68 +378,62 @@ async def lifespan(app: FastAPI):
     """Application lifespan manager"""
     global manager
 
-    # Startup
     print("=" * 60)
-    print("🚀 Starting Twake Whisper Backend (CUDA Version)")
+    print("🚀 Starting Twake Whisper Backend (Hybrid CUDA)")
     print("=" * 60)
 
-    model_name = os.getenv("MODEL_NAME", "large-v3-turbo")
+    backend_type = os.getenv("BACKEND_TYPE", "auto")
+    model_name = os.getenv("MODEL_NAME", None)
     device = os.getenv("DEVICE", "cuda")
     compute_type = os.getenv("COMPUTE_TYPE", "float16")
+    chunk_length_s = int(os.getenv("CHUNK_LENGTH_S", "10"))
 
-    if CUDA_AVAILABLE:
-        try:
-            manager = StreamingManager(
-                model_name=model_name,
-                device=device,
-                compute_type=compute_type
-            )
-            print(f"✅ Backend ready on {device.upper()} with faster-whisper")
-        except Exception as e:
-            print(f"⚠️  Failed to initialize manager: {e}")
-            import traceback
-            traceback.print_exc()
-            manager = None
-    else:
-        print("⚠️  faster-whisper not available - running in disabled mode")
+    try:
+        manager = StreamingManager(
+            backend_type=backend_type,
+            model_name=model_name,
+            device=device,
+            compute_type=compute_type,
+            chunk_length_s=chunk_length_s
+        )
+        print(f"✅ Backend ready")
+    except Exception as e:
+        print(f"⚠️  Failed to initialize manager: {e}")
+        import traceback
+        traceback.print_exc()
         manager = None
 
     print("=" * 60)
 
     yield
 
-    # Shutdown
     print("\n🛑 Shutting down Twake Whisper Backend...")
     if manager:
-        # End all active sessions
         for session_id in list(manager.sessions.keys()):
             manager.end_session(session_id)
 
 
-# Create FastAPI app
 app = FastAPI(
-    title="TheWhisper-api (CUDA)",
+    title="TheWhisper-api (Hybrid CUDA)",
     description="""
-## Real-time Speech-to-Text API with faster-whisper on NVIDIA GPUs
+## Real-time Speech-to-Text API with Hybrid Whisper Support
 
-TheWhisper-api provides high-performance, real-time speech-to-text transcription using faster-whisper optimized for NVIDIA GPUs with CUDA.
+Supports both:
+- **TheStageAI optimized models** (thewhisper-large-v3-turbo) - requires thestage_speechkit
+- **OpenAI Whisper models** (large-v3-turbo) - via faster-whisper
 
 ### Features
-- 🚀 **CUDA Acceleration**: Optimized for NVIDIA GPUs
-- 🎯 **Session-based Streaming**: Manage multiple concurrent transcription sessions
+- 🚀 **Hybrid Backend**: Auto-detects available backend (TheStageAI or faster-whisper)
+- 🎯 **Session-based Streaming**: Multiple concurrent transcription sessions
 - ⏱️ **Word Timestamps**: Precise word-level timing information
-- 🔄 **Real-time Processing**: Low-latency transcription with configurable chunk sizes
-- 🌐 **OpenAI Compatible**: Supports OpenAI Audio API format
-
-### API Formats
-- **Session-based API**: `/session/*` endpoints for streaming transcription
-- **OpenAI Compatible**: `/v1/audio/transcriptions` for drop-in replacement
+- 🔄 **Real-time Processing**: Low-latency transcription
+- 🌐 **OpenAI Compatible**: `/v1/audio/transcriptions` endpoint
 
 ### Documentation
 - **Swagger UI**: [/docs](/docs)
 - **ReDoc**: [/redoc](/redoc)
     """,
-    version="1.0.0-cuda",
+    version="1.0.0-hybrid",
     contact={
         "name": "TheWhisper-api",
         "url": "https://github.com/mmaudet/TheWhisper-api",
@@ -365,14 +444,13 @@ TheWhisper-api provides high-performance, real-time speech-to-text transcription
     lifespan=lifespan
 )
 
-# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:8080",
         "http://twake-assistant.cozy.localhost:8080",
         "http://app.cozy.localhost:8080",
-        "*"  # Allow all origins for Docker deployment
+        "*"
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -387,12 +465,15 @@ app.add_middleware(
 @app.get("/", tags=["General"])
 async def root():
     """Get API information"""
+    backend_info = "TheStageAI" if THESTAGE_AVAILABLE else "faster-whisper" if FASTER_WHISPER_AVAILABLE else "None"
     return {
-        "message": "TheWhisper-api - CUDA Speech-to-Text",
+        "message": "TheWhisper-api - Hybrid CUDA Speech-to-Text",
         "status": "running",
         "platform": "CUDA/NVIDIA GPU",
-        "cuda_available": CUDA_AVAILABLE,
-        "version": "1.0.0-cuda"
+        "backend": backend_info,
+        "thestage_available": THESTAGE_AVAILABLE,
+        "faster_whisper_available": FASTER_WHISPER_AVAILABLE,
+        "version": "1.0.0-hybrid"
     }
 
 
@@ -400,8 +481,8 @@ async def root():
 async def health():
     """Health check endpoint"""
     return {
-        "status": "healthy",
-        "cuda_available": CUDA_AVAILABLE,
+        "status": "healthy" if manager else "unavailable",
+        "backend": "TheStageAI" if THESTAGE_AVAILABLE else "faster-whisper" if FASTER_WHISPER_AVAILABLE else "None",
         "active_sessions": len(manager.sessions) if manager else 0
     }
 
@@ -477,87 +558,47 @@ async def clear_session(session_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ============================================================================
-# OpenAI Compatible API
-# ============================================================================
-
 @app.post("/v1/audio/transcriptions", tags=["OpenAI Compatible"])
 async def create_transcription(
-    file: UploadFile = File(..., description="The audio file to transcribe"),
-    model: str = Form(default="whisper-1", description="Model to use for transcription"),
-    language: Optional[str] = Form(default=None, description="Language of the audio (ISO-639-1)"),
-    response_format: str = Form(default="json", description="Format of the response: json, text, srt, verbose_json, vtt"),
-    temperature: float = Form(default=0.0, description="Sampling temperature (0-1)")
+    file: UploadFile = File(...),
+    model: str = Form(default="whisper-1"),
+    language: Optional[str] = Form(default=None),
+    response_format: str = Form(default="json"),
+    temperature: float = Form(default=0.0)
 ):
     """Create transcription (OpenAI compatible)"""
-    if not manager or not CUDA_AVAILABLE:
+    if not manager:
         raise HTTPException(status_code=503, detail="Service not available")
 
     try:
-        # Read audio file
         audio_bytes = await file.read()
 
-        # Convert audio to numpy array
         try:
             import librosa
-            # Load audio with librosa (handles various formats)
             audio_array, sr = librosa.load(io.BytesIO(audio_bytes), sr=16000, mono=True)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Invalid audio format: {str(e)}")
 
-        # Transcribe with faster-whisper
-        segments, info = manager.model.transcribe(
+        words, info = manager.backend.transcribe(
             audio_array,
-            language=language,
-            word_timestamps=(response_format == "verbose_json"),
-            vad_filter=True
+            language=language or "en",
+            word_timestamps=(response_format == "verbose_json")
         )
 
-        # Convert segments generator to list
-        segments_list = list(segments)
+        text = " ".join([w.text for w in words])
 
-        # Extract text
-        text = " ".join([segment.text.strip() for segment in segments_list])
-
-        # Format response according to response_format
         if response_format == "text":
             return text
         elif response_format == "verbose_json":
-            # Return detailed format similar to OpenAI
-            formatted_segments = []
-            for i, seg in enumerate(segments_list):
-                segment_data = {
-                    "id": i,
-                    "seek": 0,
-                    "start": seg.start,
-                    "end": seg.end,
-                    "text": seg.text,
-                    "tokens": [],
-                    "temperature": temperature,
-                    "avg_logprob": seg.avg_logprob if hasattr(seg, 'avg_logprob') else 0.0,
-                    "compression_ratio": seg.compression_ratio if hasattr(seg, 'compression_ratio') else 0.0,
-                    "no_speech_prob": seg.no_speech_prob if hasattr(seg, 'no_speech_prob') else 0.0
-                }
-                if hasattr(seg, 'words') and seg.words:
-                    segment_data["words"] = [
-                        {
-                            "word": w.word,
-                            "start": w.start,
-                            "end": w.end,
-                            "probability": w.probability if hasattr(w, 'probability') else 1.0
-                        }
-                        for w in seg.words
-                    ]
-                formatted_segments.append(segment_data)
-
             return {
                 "task": "transcribe",
-                "language": info.language if hasattr(info, 'language') else (language or "en"),
+                "language": info.get('language', language or "en"),
                 "duration": len(audio_array) / 16000.0,
                 "text": text,
-                "segments": formatted_segments
+                "words": [{"word": w.text, "start": w.timestamp[0] if w.timestamp else 0,
+                          "end": w.timestamp[1] if w.timestamp else 0} for w in words]
             }
-        else:  # json (default)
+        else:
             return {"text": text}
 
     except HTTPException:
@@ -568,10 +609,6 @@ async def create_transcription(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ============================================================================
-# Signal Handlers
-# ============================================================================
-
 def signal_handler(signum, frame):
     """Handle shutdown signals"""
     print(f"\n🛑 Received signal {signum}, shutting down gracefully...")
@@ -581,10 +618,6 @@ def signal_handler(signum, frame):
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
-
-# ============================================================================
-# Main
-# ============================================================================
 
 if __name__ == "__main__":
     import uvicorn

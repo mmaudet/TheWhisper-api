@@ -93,6 +93,12 @@ uv run uvicorn server:app --host 0.0.0.0 --port 8000
 
 ## CUDA Version (Linux + NVIDIA GPU)
 
+Supports **two Whisper backends**:
+- **faster-whisper** (default): OpenAI models, open source, no licensing needed
+- **TheStageAI SDK**: Optimized streaming models (thewhisper-large-v3-turbo), advanced features
+
+The system **auto-detects** available backends and falls back gracefully.
+
 ### Requirements
 
 - **Linux** server with NVIDIA GPU (any CUDA-compatible GPU)
@@ -141,18 +147,27 @@ docker compose ps
 Edit `.env` to customize:
 
 ```env
-# Model size (tiny, base, small, medium, large-v3-turbo, large-v3)
+# Backend selection (auto, faster-whisper, thestage)
+BACKEND_TYPE=auto
+
+# Models:
+# - OpenAI: tiny, base, small, medium, large-v3, large-v3-turbo
+# - TheStageAI: TheStageAI/thewhisper-large-v3-turbo, TheStageAI/thewhisper-large-v3
 MODEL_NAME=large-v3-turbo
 
 # Device (cuda or cpu)
 DEVICE=cuda
 
-# Compute precision (float16, int8_float16, int8)
+# Compute precision (float16, int8_float16, int8) - faster-whisper only
 COMPUTE_TYPE=float16
+
+# Chunk size (10, 15, 20, 30) - TheStageAI only
+CHUNK_LENGTH_S=10
 ```
 
 ### Model Selection
 
+**OpenAI Models** (faster-whisper):
 | Model | VRAM | Speed | Accuracy |
 |-------|------|-------|----------|
 | tiny | ~1GB | 50x realtime | Low |
@@ -161,6 +176,10 @@ COMPUTE_TYPE=float16
 | medium | ~5GB | 10x realtime | Very Good |
 | large-v3-turbo | ~6GB | 8x realtime | Excellent ⭐ |
 | large-v3 | ~10GB | 5x realtime | Excellent |
+
+**TheStageAI Models**:
+- `TheStageAI/thewhisper-large-v3-turbo` - Optimized for streaming (~6GB VRAM)
+- `TheStageAI/thewhisper-large-v3` - Full optimized model (~10GB VRAM)
 
 ### Full Documentation
 

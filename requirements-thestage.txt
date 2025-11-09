@@ -1,0 +1,25 @@
+# TheWhisper-api with TheStageAI SDK
+# For Linux with NVIDIA GPU support + TheStageAI optimized models
+
+# Web Framework
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+python-multipart==0.0.20
+
+# Audio Processing
+numpy==1.26.4
+librosa==0.10.2.post1
+
+# Utilities
+pydantic==2.10.4
+python-dotenv==1.0.1
+
+# TheStageAI SDK (installed from GitHub)
+# git+https://github.com/TheStageAI/TheWhisper.git#egg=thestage_speechkit[nvidia]
+
+# Optional: faster-whisper as fallback
+faster-whisper==1.0.3
+
+# CUDA dependencies (from base image)
+# - CUDA Toolkit 12.x
+# - cuDNN 8.x

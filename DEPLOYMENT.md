@@ -1,6 +1,32 @@
-# Deployment Guide - CUDA Version
+# Deployment Guide - CUDA Version (Hybrid)
 
 This guide explains how to deploy TheWhisper-api on a Linux server with NVIDIA GPU using Docker.
+
+## Backend Options
+
+TheWhisper-api supports **two Whisper backends**:
+
+### 1. faster-whisper (Default) - OpenAI Models
+- **Models**: OpenAI Whisper models (tiny, base, small, medium, large-v3, large-v3-turbo)
+- **License**: Open source, free for all uses
+- **Performance**: Excellent, optimized with CTranslate2
+- **Best for**: Most use cases, no licensing concerns
+- **Dockerfile**: `Dockerfile` (default)
+
+### 2. TheStageAI SDK - Optimized Models
+- **Models**: TheStageAI optimized models (thewhisper-large-v3-turbo, thewhisper-large-v3)
+- **Features**: Fine-tuned for streaming, supports flexible chunk sizes (10s, 15s, 20s, 30s)
+- **License**: Requires SDK installation, check licensing for enterprise GPU usage
+- **Performance**: Optimized for real-time streaming
+- **Best for**: Production streaming applications requiring optimal latency
+- **Dockerfile**: `Dockerfile.thestage`
+
+### Which to Choose?
+
+- **Start with faster-whisper** (default): Works out of the box, no licensing concerns, excellent performance
+- **Use TheStageAI** if you need: Lower latency streaming, flexible chunk sizes, or have TheStageAI license
+
+The system can **auto-detect** and fallback: if TheStageAI SDK is unavailable, it automatically uses faster-whisper.
 
 ## Prerequisites
 
@@ -71,7 +97,12 @@ cp .env.cuda .env
 nano .env
 ```
 
-Available models (trade-off between speed and accuracy):
+**Backend Configuration** (`.env`):
+- `BACKEND_TYPE=auto` - Auto-detect (default, prefers TheStageAI, falls back to faster-whisper)
+- `BACKEND_TYPE=faster-whisper` - Force OpenAI models
+- `BACKEND_TYPE=thestage` - Force TheStageAI models (requires Dockerfile.thestage)
+
+**OpenAI Models** (faster-whisper backend):
 - `tiny` - Fastest, least accurate (~1GB VRAM)
 - `base` - Fast, moderate accuracy (~1GB VRAM)
 - `small` - Balanced (~2GB VRAM)
@@ -80,14 +111,23 @@ Available models (trade-off between speed and accuracy):
 - `large-v3` - Best accuracy (~10GB VRAM)
 - `large-v3-turbo` - Best balance (default, ~6GB VRAM)
 
-Compute types:
+**TheStageAI Models**:
+- `TheStageAI/thewhisper-large-v3-turbo` - Optimized for streaming (default)
+- `TheStageAI/thewhisper-large-v3` - Full size optimized
+
+**Compute types** (faster-whisper only):
 - `float16` - Best balance (default)
 - `int8_float16` - Faster, slightly less accurate
 - `int8` - Fastest, reduced accuracy
 
+**Chunk sizes** (TheStageAI only):
+- Supports: 10s, 15s, 20s, 30s chunks
+
 ## Deployment
 
-### Option 1: Docker Compose (Recommended)
+### Option 1: faster-whisper (Default, Recommended)
+
+Using OpenAI models via faster-whisper:
 
 ```bash
 # Build and start the container
@@ -103,7 +143,29 @@ docker compose ps
 docker compose down
 ```
 
-### Option 2: Docker Run
+### Option 2: TheStageAI SDK (Advanced)
+
+Using TheStageAI optimized models:
+
+```bash
+# Edit .env to use TheStageAI backend
+nano .env
+# Set: BACKEND_TYPE=thestage
+# Set: MODEL_NAME=TheStageAI/thewhisper-large-v3-turbo
+
+# Build and start with TheStageAI profile
+docker compose --profile thestage up -d
+
+# View logs
+docker compose logs -f whisper-api-thestage
+
+# Stop the service
+docker compose --profile thestage down
+```
+
+**Note**: TheStageAI SDK installation may require authentication or may not be publicly available. The Dockerfile will attempt to install it, but falls back to faster-whisper if unavailable.
+
+### Option 3: Docker Run (Manual)
 
 ```bash
 # Build the image

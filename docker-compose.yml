@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  whisper-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: thewhisper-api:cuda
+    container_name: whisper-api-cuda
+    restart: unless-stopped
+
+    # GPU configuration
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+    # Environment variables
+    environment:
+      - MODEL_NAME=${MODEL_NAME:-large-v3-turbo}
+      - DEVICE=${DEVICE:-cuda}
+      - COMPUTE_TYPE=${COMPUTE_TYPE:-float16}
+      - PORT=8000
+      - MODEL_CACHE_DIR=/models
+
+    # Port mapping
+    ports:
+      - "8000:8000"
+
+    # Volume for model cache (persistent storage)
+    volumes:
+      - whisper-models:/models
+      - ./logs:/app/logs
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  whisper-models:
+    driver: local

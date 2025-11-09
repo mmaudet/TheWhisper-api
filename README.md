@@ -1,18 +1,34 @@
-# TheWhisper-api (MLX Native)
+# TheWhisper-api
 
-Real-time speech-to-text API backend using MLX-Whisper on Apple Silicon.
+Real-time speech-to-text API backend powered by Whisper.
 
-## Requirements
+## Two Versions Available
+
+### 🍎 MLX Version (macOS Apple Silicon)
+Optimized for Apple Silicon using MLX framework - runs locally on your MacBook with low power consumption.
+
+**Best for:** Local development, privacy-focused applications, low-power requirements
+
+### 🐳 CUDA Version (Linux + NVIDIA GPU)
+Dockerized deployment for Linux servers with NVIDIA GPUs using faster-whisper.
+
+**Best for:** Production deployments, high-throughput requirements, server environments
+
+---
+
+## MLX Version (Apple Silicon)
+
+### Requirements
 
 - **macOS** with Apple Silicon (M1/M2/M3)
 - **Python 3.11+**
 - **MLX framework** (only works natively on macOS)
 
-## Installation
+### Installation
 
 This project uses [uv](https://github.com/astral-sh/uv) for fast, reliable Python package management.
 
-### 1. Install uv (if not already installed)
+#### 1. Install uv (if not already installed)
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -23,7 +39,7 @@ Or via Homebrew:
 brew install uv
 ```
 
-### 2. Install Dependencies
+#### 2. Install Dependencies
 
 ```bash
 cd /Users/mmaudet/work/TheWhisper-api
@@ -35,7 +51,7 @@ This creates a virtual environment (`.venv/`) and installs all dependencies:
 - FastAPI and Uvicorn (web framework)
 - NumPy and Librosa (audio processing)
 
-### 3. Configure Environment (Optional)
+#### 3. Configure Environment (Optional)
 
 Copy the example environment file:
 
@@ -50,9 +66,9 @@ MODEL_NAME=mlx-community/whisper-large-v3-turbo
 PORT=8000
 ```
 
-## Running the Server
+### Running the Server
 
-### Development Mode
+#### Development Mode
 
 With uv (recommended):
 ```bash
@@ -67,13 +83,99 @@ python server.py
 
 The server will start on `http://localhost:8000`
 
-### Production Mode
+#### Production Mode
 
 ```bash
 uv run uvicorn server:app --host 0.0.0.0 --port 8000
 ```
 
+---
+
+## CUDA Version (Linux + NVIDIA GPU)
+
+### Requirements
+
+- **Linux** server with NVIDIA GPU (any CUDA-compatible GPU)
+- **Docker** and **Docker Compose**
+- **NVIDIA Container Toolkit**
+- Minimum 8GB GPU VRAM for `large-v3-turbo` model
+
+### Quick Start
+
+```bash
+# Clone repository
+git clone https://github.com/mmaudet/TheWhisper-api.git
+cd TheWhisper-api
+
+# Run deployment script
+./deploy.sh
+```
+
+The script will:
+1. Check prerequisites (Docker, NVIDIA Container Toolkit)
+2. Create configuration from `.env.cuda`
+3. Build Docker image
+4. Start the service
+5. Wait for health check
+
+Service will be available at `http://localhost:8000`
+
+### Manual Deployment
+
+```bash
+# Copy configuration
+cp .env.cuda .env
+
+# Build and start with Docker Compose
+docker compose up -d
+
+# View logs
+docker compose logs -f
+
+# Check status
+docker compose ps
+```
+
+### Configuration
+
+Edit `.env` to customize:
+
+```env
+# Model size (tiny, base, small, medium, large-v3-turbo, large-v3)
+MODEL_NAME=large-v3-turbo
+
+# Device (cuda or cpu)
+DEVICE=cuda
+
+# Compute precision (float16, int8_float16, int8)
+COMPUTE_TYPE=float16
+```
+
+### Model Selection
+
+| Model | VRAM | Speed | Accuracy |
+|-------|------|-------|----------|
+| tiny | ~1GB | 50x realtime | Low |
+| base | ~1GB | 40x realtime | Moderate |
+| small | ~2GB | 20x realtime | Good |
+| medium | ~5GB | 10x realtime | Very Good |
+| large-v3-turbo | ~6GB | 8x realtime | Excellent ⭐ |
+| large-v3 | ~10GB | 5x realtime | Excellent |
+
+### Full Documentation
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for complete deployment guide including:
+- Detailed installation steps
+- Production configurations
+- Monitoring and troubleshooting
+- SSL/TLS setup with Nginx
+- Resource requirements
+
+---
+
 ## API Endpoints
+
+Both versions expose the same API endpoints.
 
 ### Health Check
 

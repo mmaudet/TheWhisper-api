@@ -1,0 +1,23 @@
+# TheWhisper-api CUDA Version Requirements
+# For Linux with NVIDIA GPU support
+
+# Web Framework
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+python-multipart==0.0.20
+
+# Faster-Whisper (CUDA optimized)
+faster-whisper==1.0.3
+
+# Audio Processing
+numpy==1.26.4
+librosa==0.10.2.post1
+
+# Utilities
+pydantic==2.10.4
+python-dotenv==1.0.1
+
+# CUDA dependencies (installed via system packages in Docker)
+# - CUDA Toolkit 12.x
+# - cuDNN 8.x
+# These are handled by the NVIDIA CUDA base image

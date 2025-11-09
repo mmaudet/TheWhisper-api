@@ -10,26 +10,32 @@ Real-time speech-to-text API backend using MLX-Whisper on Apple Silicon.
 
 ## Installation
 
-### 1. Create Virtual Environment
+This project uses [uv](https://github.com/astral-sh/uv) for fast, reliable Python package management.
+
+### 1. Install uv (if not already installed)
 
 ```bash
-cd /Users/mmaudet/work/TheWhisper-api
-python3 -m venv venv
-source venv/bin/activate
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Or via Homebrew:
+```bash
+brew install uv
 ```
 
 ### 2. Install Dependencies
 
 ```bash
-pip install -r requirements.txt
+cd /Users/mmaudet/work/TheWhisper-api
+uv sync
 ```
 
-This will install:
+This creates a virtual environment (`.venv/`) and installs all dependencies:
 - MLX and MLX-Whisper (Apple Silicon optimized)
 - FastAPI and Uvicorn (web framework)
 - NumPy and Librosa (audio processing)
 
-### 3. Configure Environment
+### 3. Configure Environment (Optional)
 
 Copy the example environment file:
 
@@ -37,7 +43,7 @@ Copy the example environment file:
 cp .env.example .env
 ```
 
-Edit `.env` if needed (optional):
+Edit `.env` if needed:
 
 ```env
 MODEL_NAME=mlx-community/whisper-large-v3-turbo
@@ -48,7 +54,14 @@ PORT=8000
 
 ### Development Mode
 
+With uv (recommended):
 ```bash
+uv run python server.py
+```
+
+Or activate the virtual environment first:
+```bash
+source .venv/bin/activate
 python server.py
 ```
 
@@ -57,7 +70,7 @@ The server will start on `http://localhost:8000`
 ### Production Mode
 
 ```bash
-uvicorn server:app --host 0.0.0.0 --port 8000
+uv run uvicorn server:app --host 0.0.0.0 --port 8000
 ```
 
 ## API Endpoints
@@ -185,9 +198,9 @@ If you see "MLX-Whisper not available":
 
 1. Verify you're on macOS with Apple Silicon
 2. Check Python version (3.11+)
-3. Reinstall MLX:
+3. Reinstall dependencies:
    ```bash
-   pip install --upgrade mlx mlx-whisper
+   uv sync --reinstall
    ```
 
 ### Model Download
@@ -207,9 +220,12 @@ Large models (large-v3) require more RAM. If you encounter issues:
 ```
 TheWhisper-api/
 ├── server.py           # FastAPI application
-├── requirements.txt    # Python dependencies
+├── pyproject.toml      # Project metadata and dependencies (uv)
+├── uv.lock            # Dependency lockfile (uv)
+├── requirements.txt    # Python dependencies (legacy, for reference)
 ├── .env.example        # Environment template
 ├── .gitignore         # Git ignore rules
+├── test_backend.py    # Integration test script
 └── README.md          # This file
 ```
 

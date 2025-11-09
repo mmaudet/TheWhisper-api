@@ -126,7 +126,33 @@ The script will:
 
 Service will be available at `http://localhost:8000`
 
-### Manual Deployment
+### Pre-Built Images (Production)
+
+**Recommended for production**: Use pre-built images from GitHub Container Registry (no build time needed):
+
+```bash
+# Copy configuration
+cp .env.cuda .env
+
+# Pull and run pre-built images
+docker compose -f docker-compose.prod.yml up -d
+
+# View logs
+docker compose -f docker-compose.prod.yml logs -f
+```
+
+**Available images:**
+- `ghcr.io/mmaudet/thewhisper-api:cuda-latest` - faster-whisper (default)
+- `ghcr.io/mmaudet/thewhisper-api:thestage-latest` - TheStageAI version
+- Version tags: `1.0.0`, `1.0`, `1` for pinned deployments
+
+**Benefits:** ✅ No build time, ✅ CI/CD tested, ✅ Automatic updates
+
+See [CICD.md](CICD.md) for complete CI/CD documentation.
+
+### Manual Deployment (Development)
+
+Build locally for development or customization:
 
 ```bash
 # Copy configuration

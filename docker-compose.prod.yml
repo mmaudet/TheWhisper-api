@@ -1,0 +1,113 @@
+version: '3.8'
+
+# Production docker-compose using pre-built images from GitHub Container Registry
+# Usage: docker compose -f docker-compose.prod.yml up -d
+
+services:
+  # ============================================================================
+  # Default Service: faster-whisper with OpenAI models (pre-built image)
+  # ============================================================================
+  whisper-api:
+    image: ghcr.io/mmaudet/thewhisper-api:cuda-latest
+    container_name: whisper-api-cuda
+    restart: unless-stopped
+
+    # GPU configuration
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+    # Environment variables
+    environment:
+      - BACKEND_TYPE=${BACKEND_TYPE:-auto}
+      - MODEL_NAME=${MODEL_NAME:-large-v3-turbo}
+      - DEVICE=${DEVICE:-cuda}
+      - COMPUTE_TYPE=${COMPUTE_TYPE:-float16}
+      - CHUNK_LENGTH_S=${CHUNK_LENGTH_S:-10}
+      - PORT=8000
+      - MODEL_CACHE_DIR=/models
+
+    # Port mapping
+    ports:
+      - "8000:8000"
+
+    # Volume for model cache (persistent storage)
+    volumes:
+      - whisper-models:/models
+      - ./logs:/app/logs
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # Alternative Service: TheStageAI optimized models (pre-built image)
+  # ============================================================================
+  whisper-api-thestage:
+    image: ghcr.io/mmaudet/thewhisper-api:thestage-latest
+    container_name: whisper-api-thestage
+    restart: unless-stopped
+    profiles: ["thestage"]  # Only starts with: docker compose -f docker-compose.prod.yml --profile thestage up
+
+    # GPU configuration
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+    # Environment variables for TheStageAI
+    environment:
+      - BACKEND_TYPE=thestage
+      - MODEL_NAME=${MODEL_NAME:-TheStageAI/thewhisper-large-v3-turbo}
+      - DEVICE=${DEVICE:-cuda}
+      - CHUNK_LENGTH_S=${CHUNK_LENGTH_S:-10}
+      - PORT=8000
+      - MODEL_CACHE_DIR=/models
+
+    # Port mapping
+    ports:
+      - "8000:8000"
+
+    # Volume for model cache
+    volumes:
+      - whisper-models-thestage:/models
+      - ./logs:/app/logs
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  whisper-models:
+    driver: local
+  whisper-models-thestage:
+    driver: local

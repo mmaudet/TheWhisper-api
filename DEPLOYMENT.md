@@ -145,6 +145,8 @@ docker compose down
 
 ### Option 2: TheStageAI SDK (Advanced)
 
+**⚠️ Important**: TheStageAI build requires significant disk space (~3-4GB for dependencies including PyTorch, TensorRT, CUDA libs) and may fail with "No space left on device" errors in constrained environments like GitHub Actions runners or systems with limited disk space. Ensure you have at least 5GB of free disk space before building.
+
 Using TheStageAI optimized models:
 
 ```bash
@@ -311,6 +313,27 @@ sudo systemctl restart docker
 - Use a smaller model (e.g., `small` or `base` instead of `large-v3-turbo`)
 - Use `int8` compute type instead of `float16`
 - Reduce concurrent sessions
+
+### Disk Space Errors During Build
+
+If you encounter "No space left on device" errors when building TheStageAI image:
+
+```bash
+# Check available disk space
+df -h
+
+# Clean up Docker build cache
+docker builder prune -a
+
+# Remove unused Docker images
+docker image prune -a
+
+# If still insufficient, use faster-whisper backend instead
+# Edit .env: BACKEND_TYPE=faster-whisper
+docker compose up -d
+```
+
+TheStageAI dependencies require ~3-4GB during build. Consider using the default faster-whisper backend if disk space is limited.
 
 ### Model Download Fails
 

@@ -73,67 +73,72 @@ jobs:
           short-description: "Real-time speech-to-text API with MLX (macOS) and CUDA (Linux GPU) support"
           readme-filepath: ./README.md
 
-  build-thestage:
-    name: Build TheStageAI Image
-    runs-on: ubuntu-latest
+  # TheStageAI build disabled due to space constraints on GitHub Actions runners
+  # The dependencies (PyTorch, TensorRT, CUDA libs) require ~3-4GB which exceeds runner limits
+  # Users can build TheStageAI image locally using: docker build -f Dockerfile.thestage .
+  # build-thestage:
+  #   name: Build TheStageAI Image
+  #   runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+  #   steps:
+  #     - name: Checkout repository
+  #       uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+  #     - name: Set up Docker Buildx
+  #       uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Docker Hub
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
-        with:
-          username: ${{ env.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+  #     - name: Log in to Docker Hub
+  #       if: github.event_name != 'pull_request'
+  #       uses: docker/login-action@v3
+  #       with:
+  #         username: ${{ env.DOCKERHUB_USERNAME }}
+  #         password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Extract metadata (tags, labels)
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=branch,suffix=-thestage
-            type=ref,event=pr,suffix=-thestage
-            type=semver,pattern={{version}},suffix=-thestage
-            type=semver,pattern={{major}}.{{minor}},suffix=-thestage
-            type=semver,pattern={{major}},suffix=-thestage
-            type=sha,prefix={{branch}}-,suffix=-thestage
-            type=raw,value=thestage,enable={{is_default_branch}}
-          flavor: |
-            latest=false
+  #     - name: Extract metadata (tags, labels)
+  #       id: meta
+  #       uses: docker/metadata-action@v5
+  #       with:
+  #         images: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}
+  #         tags: |
+  #           type=ref,event=branch,suffix=-thestage
+  #           type=ref,event=pr,suffix=-thestage
+  #           type=semver,pattern={{version}},suffix=-thestage
+  #           type=semver,pattern={{major}}.{{minor}},suffix=-thestage
+  #           type=semver,pattern={{major}},suffix=-thestage
+  #           type=sha,prefix={{branch}}-,suffix=-thestage
+  #           type=raw,value=thestage,enable={{is_default_branch}}
+  #         flavor: |
+  #           latest=false
 
-      - name: Build and push TheStageAI image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile.thestage
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=thestage
-          cache-to: type=gha,mode=max,scope=thestage
-          platforms: linux/amd64
+  #     - name: Build and push TheStageAI image
+  #       uses: docker/build-push-action@v5
+  #       with:
+  #         context: .
+  #         file: ./Dockerfile.thestage
+  #         push: ${{ github.event_name != 'pull_request' }}
+  #         tags: ${{ steps.meta.outputs.tags }}
+  #         labels: ${{ steps.meta.outputs.labels }}
+  #         cache-from: type=gha,scope=thestage
+  #         cache-to: type=gha,mode=max,scope=thestage
+  #         platforms: linux/amd64
 
   summary:
     name: Build Summary
     runs-on: ubuntu-latest
-    needs: [build-faster-whisper, build-thestage]
+    needs: [build-faster-whisper]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
 
     steps:
       - name: Summary
         run: |
-          echo "✅ Docker images built and pushed successfully to Docker Hub!"
+          echo "✅ Docker image built and pushed successfully to Docker Hub!"
           echo ""
-          echo "📦 Images available at:"
+          echo "📦 Image available at:"
           echo "  - https://hub.docker.com/r/${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}"
           echo ""
           echo "🐳 Pull commands:"
           echo "  docker pull ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest"
           echo "  docker pull ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:cuda"
-          echo "  docker pull ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:thestage"
+          echo ""
+          echo "ℹ️  Note: TheStageAI image not built in CI/CD (space constraints)"
+          echo "   Build locally: docker build -f Dockerfile.thestage -t ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:thestage ."

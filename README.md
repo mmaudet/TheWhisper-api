@@ -144,9 +144,10 @@ docker compose -f docker-compose.prod.yml logs -f
 **Available on Docker Hub:**
 - 🐳 **Repository**: https://hub.docker.com/r/mmaudet/thewhisper-api
 - `mmaudet/thewhisper-api:cuda` - faster-whisper (default)
-- `mmaudet/thewhisper-api:thestage` - TheStageAI version
 - `mmaudet/thewhisper-api:latest` - Latest build
 - Version tags: `1.0.0`, `1.0`, `1` for pinned deployments
+
+**Note:** TheStageAI image (`thestage` tag) is not built in CI/CD due to disk space constraints (~3-4GB dependencies). Build locally if needed: `docker build -f Dockerfile.thestage .`
 
 **Benefits:** ✅ No build time, ✅ CI/CD tested, ✅ Automatic updates
 
